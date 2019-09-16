@@ -14,6 +14,30 @@ const wh = window.innerWidth / window.innerHeight;
 const camera = new THREE.PerspectiveCamera(45, wh, 1, 8000);
 camera.position.set(0, 0, -4);
 
+// Line setup
+const lineMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    t: new THREE.Uniform(0.0)
+  },
+  vertexShader: `
+attribute float linePosition;
+varying float vLinePosition;
+void main() {
+  vLinePosition = linePosition;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+}
+`,
+  fragmentShader: `
+uniform float t;
+varying float vLinePosition;
+void main() {
+  float opacity = ceil(t - vLinePosition);
+  gl_FragColor = vec4(0.0, 0.0, 0.0, opacity);
+}
+`,
+  transparent: true
+});
+
 // Renderer setup
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -66,33 +90,18 @@ const createSphere = (radius = 0.1, c = "white") => {
 
 /**
  * Tween animation
- * - attaches to all of the spheres and affects their positions.
- *
- * @param {THREE.Object3D} point
- */
-const changePosOut = point => {
-  new Tween(point.position)
-    .to({ x: 0, y: 0, z: 0 }) //starting value
-    .wait(1000)
-    .to(
-      {
-        x: point.position.x,
-        y: point.position.y,
-        z: point.position.z
-      },
-      1000,
-      Ease.backOut
-    );
-};
-
-/**
- * Tween animation
  * - attaches to the group of spheres in order to change it's scale.
  *
- * @param {THREE.Object3D} ball
+ * @param {THREE.Object3D}  ball
  */
-const changePosIn = ball =>
-  new Tween(ball.scale).wait(15000).to({ x: 0, y: 0, z: 0 }, 1000, Ease.backIn);
+const changeBallScale = ball => {
+  new Tween(ball.scale)
+    .to({ x: 0.01, y: 0.01, z: 0.01 })
+    .wait(1000)
+    .to({ x: 1.0, y: 1.0, z: 1.0 }, 1000, Ease.backOut)
+    .wait(15000)
+    .to({ x: 0, y: 0, z: 0 }, 1000, Ease.backIn);
+};
 
 /**
  * Tween animation
@@ -152,6 +161,22 @@ const changeScale = (point, index) => {
     );
 };
 
+/**
+ * Tween animation
+ * - attaches to the line material in order to change its opacity.
+ *
+ * @param {THREE.ShaderMaterial} material
+ */
+const changeLineOpacity = material => {
+  new Tween(material.uniforms.t).wait(7000).to(
+    {
+      value: 1.0
+    },
+    1000,
+    Ease.cubicIn
+  );
+};
+
 // Group to contain individual spheres.
 const ball = new THREE.Group();
 ball.rotation.set(10, 0, 0); // initial rotation position
@@ -160,23 +185,53 @@ ball.rotation.set(10, 0, 0); // initial rotation position
  * Called manually just before render();
  */
 const fillScene = () => {
-  fibonacciSphere(spheres, false).forEach((coords, index) => {
+  const fibonacciSpherePoints = fibonacciSphere(spheres, false);
+  const positionArray = [];
+  const linePositionArray = [];
+  fibonacciSpherePoints.forEach((coords, index, array) => {
     const point = createSphere(0.03, "black");
 
     point.position.set(...coords);
     // attach Tween animations to each sphere
-    changePosOut(point);
     changeScale(point, index);
 
     // add it to the group
     ball.add(point);
+
+    // add a line segment between two fibonacci points to the line array
+    const nextIndex = (index + 1) % array.length;
+    positionArray.push(...coords, ...array[nextIndex]);
+
+    // add relative position in line to drive the line opacity animation
+    linePositionArray.push(
+      index / (array.length - 1),
+      nextIndex / (array.length - 1)
+    );
   });
 
-  // add the group of spheres to the scene
+  // create the line mesh
+  const lineGeometry = new THREE.BufferGeometry();
+  lineGeometry.addAttribute(
+    "position",
+    new THREE.BufferAttribute(new Float32Array(positionArray), 3)
+  );
+  lineGeometry.addAttribute(
+    "linePosition",
+    new THREE.BufferAttribute(new Float32Array(linePositionArray), 1)
+  );
+  const lineMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
+
+  // attach a Tween animation to modify the line opacity
+  changeLineOpacity(lineMaterial);
+
+  // add the line to the group
+  ball.add(lineMesh);
+
+  // add the group of spheres and lines to the scene
   scene.add(ball);
 
   // attach a Tween animation to the group to scale it out of sight
-  changePosIn(ball);
+  changeBallScale(ball);
 };
 
 /**
