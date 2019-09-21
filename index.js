@@ -5,6 +5,14 @@ const OrbitControls = require("three-orbit-controls")(THREE);
 // The number of spheres to render.
 const spheres = 89;
 
+// Maximum value of the dot product between two vectors (same vector: 1.0, opposite vectors: -1.0)
+// acceptable to connect to vertices in the line generation algorithm.
+const maxDotValue = 0.8;
+
+// Maximum number of tries the line generation algorithm uses to find a good candidate to connect
+// the current vertex with.
+const maxTries = 100;
+
 // Scene setup
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("white");
@@ -65,10 +73,11 @@ void main() {
   // Calculate the fragment's opacity based on the varying vLinePosition and t uniform.
   float opacity = ceil(t - vLinePosition);
   // Output black with the computed opacity.
-  gl_FragColor = vec4(0.0, 0.0, 0.0, opacity);
+  gl_FragColor = vec4(0.0, 0.0, 0.0, vLinePosition * opacity);
 }
 `,
-  transparent: true
+  transparent: true,
+  depthWrite: false
 });
 
 // Renderer setup
@@ -219,8 +228,7 @@ ball.rotation.set(10, 0, 0); // initial rotation position
  */
 const fillScene = () => {
   const fibonacciSpherePoints = fibonacciSphere(spheres, false);
-  const positionArray = [];
-  const linePositionArray = [];
+  const positions = [];
   fibonacciSpherePoints.forEach((coords, index, array) => {
     const point = createSphere(0.03, "black");
 
@@ -228,19 +236,50 @@ const fillScene = () => {
     // attach Tween animations to each sphere
     changeScale(point, index);
 
+    // store the position to later use on line geometry creation
+    positions.push(coords);
+
     // add it to the group
     ball.add(point);
-
-    // add a line segment between two fibonacci points to the line array
-    const nextIndex = (index + 1) % array.length;
-    positionArray.push(...coords, ...array[nextIndex]);
-
-    // add relative position in line to drive the line opacity animation
-    linePositionArray.push(
-      index / (array.length - 1),
-      nextIndex / (array.length - 1)
-    );
   });
+
+  // construct the line geometry
+  // points are added to the line randomly until all vertices have been visited.
+  const positionArray = [];
+  const linePositionArray = [];
+
+  let nTries = 0;
+  let lineIndex = 0;
+  const currentPos = new THREE.Vector3().fromArray(positions.pop());
+  const nextPos = new THREE.Vector3();
+  while (positions.length > 0) {
+    // add a line segment between two fibonacci points to the line array
+    nextPos.fromArray(
+      positions.splice(Math.floor(Math.random() * (positions.length - 1)), 1)[0]
+    );
+
+    // discard points that are not close enough to each other on the sphere's surface
+    if (currentPos.dot(nextPos) < maxDotValue && nTries < maxTries) {
+      positions.push(nextPos.toArray());
+      nTries++;
+    }
+    // add line if vertices are valid
+    else {
+      positionArray.push(...currentPos.toArray(), ...nextPos.toArray());
+
+      // add relative position in line to drive the line opacity animation
+      linePositionArray.push(
+        lineIndex / (fibonacciSpherePoints.length - 1),
+        (lineIndex + 1) / (fibonacciSpherePoints.length - 1)
+      );
+
+      // advance the line generation algorithm
+      nTries = 0;
+      ++lineIndex;
+      currentPos.copy(nextPos);
+    }
+  }
+  console.log(linePositionArray.length / 2, fibonacciSpherePoints.length);
 
   // create the line mesh
   const lineGeometry = new THREE.BufferGeometry();
